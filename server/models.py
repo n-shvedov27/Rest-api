@@ -21,6 +21,8 @@ class Client(UserMixin, db.Model):
     email = db.Column(db.String(120), unique=True)
     registration_date = db.Column(db.DateTime)
     assessments = db.relationship('Assessment', back_populates="client")
+    access_token = db.Column(db.String(500))
+    refresh_token = db.Column(db.String(500))
 
     def make_assessment(self, assessment_value: int, film: 'Film'):
         new_assessment = None
@@ -30,13 +32,19 @@ class Client(UserMixin, db.Model):
 
         if new_assessment:
             new_assessment.assessment_value = assessment_value
+            self.assessments.append(new_assessment)
+            film.assessments.append(new_assessment)
             db.session.add(new_assessment)
             db.session.commit()
         else:
             new_assessment = Assessment(assessment_value, self.id, film.id)
+            film.assessments.append(new_assessment)
+            self.assessments.appenf(new_assessment)
             db.session.add(new_assessment)
             db.session.commit()
         return "assessment created"
+
+
 
     @property
     def password(self):

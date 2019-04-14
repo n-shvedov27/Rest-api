@@ -19,7 +19,8 @@ dictConfig({
 
 app = Flask(__name__)
 
-app.secret_key = b'_5#y2L"F4Q8z\n\xec]/'
+app.secret_key = 'secret'
+
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config["SQLALCHEMY_DATABASE_URI"] = 'postgresql://postgres@localhost:54320/task7'
