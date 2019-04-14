@@ -2,6 +2,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 import datetime
+import json
 
 from .wsgi import app
 
@@ -24,6 +25,15 @@ class Client(UserMixin, db.Model):
     access_token = db.Column(db.String(500))
     refresh_token = db.Column(db.String(500))
 
+    def serialize(self):
+        return json.dumps({
+            'id': self.id,
+            'login': self.login,
+            'email': self.email,
+            'registration_date': self.registration_date,
+            'assessments': [assessment.serialize() for assessment in self.assessments]
+        })
+
     def make_assessment(self, assessment_value: int, film: 'Film'):
         new_assessment = None
         for assessment in self.assessments:
@@ -42,9 +52,6 @@ class Client(UserMixin, db.Model):
             self.assessments.appenf(new_assessment)
             db.session.add(new_assessment)
             db.session.commit()
-        return "assessment created"
-
-
 
     @property
     def password(self):
@@ -68,8 +75,16 @@ class Film(db.Model):
     film_name = db.Column(db.String(120), unique=True)
     creation_year = db.Column(db.Integer)
     creation_country = db.Column(db.String)
-
     assessments = db.relationship('Assessment', back_populates="film")
+
+    def serialize(self):
+        return json.dumps({
+            'id': self.id,
+            'film_name': self.film_name,
+            'creation_year': self.creation_year,
+            'creation_country': self.creation_country,
+            'assessments': [assessment.serialize() for assessment in self.assessments]
+        })
 
 
 class Assessment(db.Model):
@@ -86,6 +101,14 @@ class Assessment(db.Model):
 
     film_id = db.Column(db.Integer, db.ForeignKey('film.id'))
     film = db.relationship('Film', back_populates='assessments')
+
+    def serialize(self):
+        return json.dumps({
+            'id': self.id,
+            'film_name': self.film.film_name,
+            'login': self.client.login,
+            'assessment_value': self.assessment_value
+        })
 
 
 db.create_all()
