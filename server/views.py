@@ -2,26 +2,51 @@ from .models import db, Client, Film
 import jwt
 import time
 from .wsgi import app
-from flask import request, Request, Response
+from flask import request, Request, Response, redirect, url_for
 from typing import List
 
+import enum
 
-def token_is_valid() -> bool:
+
+class TokenState(enum.Enum):
+    Valid = 1
+    Invalid = 2
+    Expired = 3
+
+
+from functools import wraps
+
+
+def jwt_token_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        token_state = get_token_state()
+        if token_state == TokenState.Invalid:
+            r = lambda *args: "Invalid token"
+            return r(*args)
+        elif token_state == TokenState.Expired:
+            r = lambda *args: "Invalid expired"
+            return r(*args)
+        else:
+            return f(*args, **kwargs)
+
+    return decorated_function
+
+
+def get_token_state() -> TokenState:
     access_token = request.form.get('access_token', None)
     if not access_token:
-        return False
+        return TokenState.Invalid
     access_token = access_token.encode()
     try:
         decoded = jwt.decode(access_token, app.secret_key, algorithms=['HS256'])
-    except jwt.exceptions.DecodeError:
-        return False
+    except (jwt.DecodeError, jwt.ExpiredSignatureError):
+        return TokenState.Invalid
     client_id = decoded.get('client_id', None)
     if client_id is None:
-        return False
+        return TokenState.Invalid
     client = Client.query.get(client_id)
-    app.logger.info(client.access_token)
-    app.logger.info(access_token.decode())
-    return access_token.decode() == client.access_token
+    return TokenState.Valid if access_token.decode() == client.access_token else TokenState.Invalid
 
 
 def wrap_into_json(data: List[object]):
@@ -60,6 +85,7 @@ def update_client(request: Request, user_id: int) -> str:
 
 
 @app.route('/api/1/users', methods=['GET', 'POST'])
+@jwt_token_required
 def handle_users():
     if request.method == 'GET':
         clients = Client.query.all()
@@ -70,6 +96,7 @@ def handle_users():
 
 
 @app.route('/api/1/users/<user_id>', methods=['GET', 'DELETE', 'PUT'])
+@jwt_token_required
 def handle_user(user_id):
     if request.method == 'GET':
         client = Client.query.get(user_id)
@@ -116,9 +143,8 @@ def update_film(request: Request, film_id: int):
 
 
 @app.route('/api/1/films', methods=['GET', 'POST'])
+@jwt_token_required
 def handle_films():
-    if not token_is_valid():
-        return 'Invalid token'
     if request.method == 'GET':
         films = Film.query.all()
         return wrap_into_json(films)
@@ -128,6 +154,7 @@ def handle_films():
 
 
 @app.route('/api/1/films/<film_id>', methods=['GET', 'DELETE', 'PUT'])
+@jwt_token_required
 def handle_film(film_id):
     if request.method == 'GET':
         film = Film.query.get(film_id)
@@ -143,6 +170,7 @@ def handle_film(film_id):
 
 
 @app.route('/api/1/assessment', methods=['POST'])
+@jwt_token_required
 def make_assessment():
     client_id = request.form.get('client_id', None)
     film_id = request.form.get('film_id', None)
@@ -157,6 +185,7 @@ def make_assessment():
 
 
 @app.route('/api/1/assessment/<user_id>', methods=['GET'])
+@jwt_token_required
 def get_assessnent(user_id):
     client = Client.query.get(user_id)
     return wrap_into_json(client.assessments)
@@ -167,6 +196,7 @@ def generate_token(client: Client, for_access=False) -> str:
     return jwt.encode(
         {
             'client_id': str(client.id),
+            'exp': str(int(time.time()) + (1800 if for_access else (86400 * 30)))
         },
         app.secret_key,
         algorithm='HS256'
@@ -181,9 +211,7 @@ def login():
         return "not enought data"
     client = Client.query.filter_by(login=login).first()
     if client and client.verify_password(password):
-        access_token = generate_token(client)
-        app.logger.info("access token generated {}".format(access_token))
-        client.access_token = access_token.decode()
+        client.access_token = generate_token(client).decode()
         client.refresh_token = generate_token(client, for_access=False).decode()
 
         db.session.add(client)
@@ -194,3 +222,18 @@ def login():
         })
     else:
         return 'User not exist'
+
+
+@app.route('/api/1/refresh_token')
+def refresh_token():
+    refresh_token = request.form.get('refresh_token', None)
+    client_id = request.form.get('client_id', None)
+    client = Client.query.get(client_id)
+    if client.refresh_token == refresh_token:
+        client.access_token = generate_token(client).decode()
+        client.refresh_token = generate_token(client, for_access=False).decode()
+        db.session.add(client)
+        db.session.commit()
+        return "Refreshing success"
+    else:
+        return "Invalid refresh token"
